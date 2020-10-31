@@ -6,13 +6,10 @@
 
 #include <asm/uaccess.h>
 
-#include <linux/spinlock.h>
-
 #define BUFFER_SIZE 100
 #define WINDOW 60
 
-static spinlock_t lock;
-static char result_buffer[BUFFER_SIZE]; // protected by lock;
+static atomic_t result_buffer;
 static atomic_t counter;
 
 static ssize_t logger_read(struct file *file, char *buffer, size_t count,
@@ -20,10 +17,9 @@ static ssize_t logger_read(struct file *file, char *buffer, size_t count,
 {
 	size_t len;
 	char buf[BUFFER_SIZE];
+	memset(buf, 0, BUFFER_SIZE);
 
-	spin_lock(&lock);
-	memcpy(buf, result_buffer, BUFFER_SIZE);
-	spin_unlock(&lock);
+	sprintf(buf, "%d", atomic_read(&result_buffer));
 
 	len = strlen(buf);
 
@@ -45,12 +41,7 @@ static ssize_t logger_read(struct file *file, char *buffer, size_t count,
 
 static void update_result_buffer(void)
 {
-	int r = window_counter_agg(&counter);
-
-	spin_lock(&lock);
-	memset(result_buffer, 0, BUFFER_SIZE);
-	sprintf(result_buffer, "%d", r);
-	spin_unlock(&lock);
+	atomic_set(&result_buffer, window_counter_agg(&counter));
 }
 
 static void update_counter(void)
@@ -60,10 +51,8 @@ static void update_counter(void)
 
 static int __init irq_module_init(void)
 {
-	spin_lock_init(&lock);
 	window_counter_init(&counter);
-	result_buffer[0] = '0';
-	result_buffer[1] = '\0';
+	atomic_set(&result_buffer, 0);
 
 	if (keyboard_interrupt_init(update_counter)) {
 		return -EINVAL;
